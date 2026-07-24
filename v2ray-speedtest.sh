@@ -256,6 +256,9 @@ SEOF
 
     cat > "$XRAY_CONFIG" <<EOF
 {
+    "log": {
+        "loglevel": "warning"
+    },
     "inbounds": [
         {
             "listen": "127.0.0.1",
@@ -325,6 +328,9 @@ SEOF
 
     cat > "$XRAY_CONFIG" <<EOF
 {
+    "log": {
+        "loglevel": "warning"
+    },
     "inbounds": [
         {
             "listen": "127.0.0.1",
@@ -389,6 +395,9 @@ SEOF
 
     cat > "$XRAY_CONFIG" <<EOF
 {
+    "log": {
+        "loglevel": "warning"
+    },
     "inbounds": [
         {
             "listen": "127.0.0.1",
@@ -424,6 +433,9 @@ EOF
 generate_xray_config_ss() {
     cat > "$XRAY_CONFIG" <<EOF
 {
+    "log": {
+        "loglevel": "warning"
+    },
     "inbounds": [
         {
             "listen": "127.0.0.1",
@@ -537,17 +549,32 @@ main() {
     [[ -n "$CONFIG_NAME" ]] && log "Name: ${CONFIG_NAME}"
 
     # Start xray-core
+    local xray_log="${TMPDIR}/xray.log"
     log "Starting xray-core..."
-    xray run -c "$XRAY_CONFIG" &>/dev/null &
+    xray run -c "$XRAY_CONFIG" > "$xray_log" 2>&1 &
     XRAY_PID=$!
 
     log "Waiting for SOCKS5 proxy on port ${SOCKS_PORT}..."
     if ! wait_for_port "$SOCKS_PORT"; then
-        err "xray-core failed to start. Config:"
+        err "xray-core failed to start. Log:"
+        cat "$xray_log" >&2
+        err "Config:"
         cat "$XRAY_CONFIG" >&2
         exit 1
     fi
     ok "Proxy is ready"
+
+    # Test proxy connectivity
+    log "Testing proxy connectivity..."
+    local test_result
+    test_result=$(curl -x "socks5h://127.0.0.1:${SOCKS_PORT}" -s --connect-timeout 10 --max-time 15 -o /dev/null -w "%{http_code}" "http://www.google.com/generate_204" 2>&1 || true)
+    if [[ "$test_result" == "204" || "$test_result" == "200" ]]; then
+        ok "Proxy connection working (HTTP $test_result)"
+    else
+        warn "Proxy test returned: $test_result"
+        warn "xray log:"
+        cat "$xray_log" >&2
+    fi
 
     echo ""
     echo -e "${BOLD}───────────────────────────────────────────────${NC}"
@@ -557,26 +584,44 @@ main() {
 
     # Run speedtest (official Ookla binary with native SOCKS5 proxy support)
     local result
-    if result=$(speedtest --accept-license --simple --proxy="socks5://127.0.0.1:${SOCKS_PORT}" 2>&1); then
+    if result=$(speedtest --accept-license --format=json --proxy="socks5h://127.0.0.1:${SOCKS_PORT}" 2>&1); then
         echo ""
         echo -e "${BOLD}───────────────────────────────────────────────${NC}"
         echo -e "${GREEN}${BOLD}  Speed Test Results${NC}"
         echo -e "${BOLD}───────────────────────────────────────────────${NC}"
         echo ""
-        echo "$result" | while IFS= read -r line; do
-            if [[ "$line" == *"Ping:"* ]]; then
-                echo -e "  ${CYAN}${line}${NC}"
-            elif [[ "$line" == *"Download:"* ]]; then
-                echo -e "  ${GREEN}${line}${NC}"
-            elif [[ "$line" == *"Upload:"* ]]; then
-                echo -e "  ${YELLOW}${line}${NC}"
-            else
-                echo -e "  ${line}"
-            fi
-        done
+
+        # Parse JSON output
+        local ping_ms dl_bps ul_bps dl_mbps ul_mbps server_name
+        ping_ms=$(echo "$result" | jq -r '.ping.latency // empty' 2>/dev/null)
+        dl_bps=$(echo "$result" | jq -r '.download.bandwidth // empty' 2>/dev/null)
+        ul_bps=$(echo "$result" | jq -r '.upload.bandwidth // empty' 2>/dev/null)
+        server_name=$(echo "$result" | jq -r '.server.name // empty' 2>/dev/null)
+        local server_country
+        server_country=$(echo "$result" | jq -r '.server.country // empty' 2>/dev/null)
+        local server_provider
+        server_provider=$(echo "$result" | jq -r '.server.host // empty' 2>/dev/null)
+
+        # Convert bytes/sec to Mbit/s (bandwidth is in bytes/sec)
+        if [[ -n "$dl_bps" ]]; then
+            dl_mbps=$(echo "scale=2; ${dl_bps} * 8 / 1000000" | bc)
+        fi
+        if [[ -n "$ul_bps" ]]; then
+            ul_mbps=$(echo "scale=2; ${ul_bps} * 8 / 1000000" | bc)
+        fi
+
+        [[ -n "$server_name" ]] && echo -e "  Server: ${BOLD}${server_name}${NC} (${server_country})"
+        [[ -n "$ping_ms" ]]     && echo -e "  ${CYAN}Ping: ${ping_ms} ms${NC}"
+        [[ -n "$dl_mbps" ]]     && echo -e "  ${GREEN}Download: ${dl_mbps} Mbit/s${NC}"
+        [[ -n "$ul_mbps" ]]     && echo -e "  ${YELLOW}Upload: ${ul_mbps} Mbit/s${NC}"
         echo ""
     else
-        warn "speedtest failed, falling back to curl download test..."
+        warn "speedtest failed. Error output:"
+        echo "$result" | head -20 | while IFS= read -r line; do
+            echo -e "  ${RED}${line}${NC}"
+        done
+        echo ""
+        warn "Falling back to curl download test..."
         echo ""
 
         # Fallback: curl download test
@@ -584,19 +629,22 @@ main() {
             "https://speed.cloudflare.com/__down?bytes=52428800"
             "http://speedtest.tele2.net/10MB.zip"
             "http://proof.ovh.net/files/10Mb.dat"
+            "http://cachefly.cachefly.net/10mb.test"
         )
 
         local dl_speed=""
         for url in "${test_urls[@]}"; do
             log "Trying: ${url}"
-            local curl_out
-            curl_out=$(curl -x "socks5h://127.0.0.1:${SOCKS_PORT}" \
-                -w "%{speed_download}" \
+            local curl_out curl_err
+            curl_err=$(curl -x "socks5h://127.0.0.1:${SOCKS_PORT}" \
+                -w "\n%{speed_download}" \
                 -o /dev/null \
-                -s --connect-timeout 10 --max-time 60 \
-                "$url" 2>/dev/null || echo "0")
+                --connect-timeout 10 --max-time 60 \
+                "$url" 2>&1) || true
+            curl_out=$(echo "$curl_err" | tail -1)
+            local curl_exit=$?
 
-            if [[ "$curl_out" != "0" && -n "$curl_out" ]]; then
+            if [[ -n "$curl_out" && "$curl_out" =~ ^[0-9] && "$curl_out" != "0" ]]; then
                 local bytes_per_sec
                 bytes_per_sec=$(printf "%.0f" "$curl_out")
                 local mbps
