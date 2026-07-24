@@ -14,6 +14,7 @@ XRAY_CONFIG="${TMPDIR}/config.json"
 XRAY_PID=""
 SOCKS_PORT=1080
 HTTP_PORT=1081
+USE_HTTP_PROXY=false
 
 # ─── Cleanup ──────────────────────────────────────────────
 cleanup() {
@@ -564,16 +565,29 @@ main() {
     fi
     ok "Proxy is ready"
 
-    # Test proxy connectivity
-    log "Testing proxy connectivity..."
+    # Test proxy connectivity (SOCKS5)
+    log "Testing SOCKS5 proxy on port ${SOCKS_PORT}..."
     local test_result
-    test_result=$(curl -x "socks5h://127.0.0.1:${SOCKS_PORT}" -s --connect-timeout 10 --max-time 15 -o /dev/null -w "%{http_code}" "http://www.google.com/generate_204" 2>&1 || true)
-    if [[ "$test_result" == "204" || "$test_result" == "200" ]]; then
-        ok "Proxy connection working (HTTP $test_result)"
+    test_result=$(curl --socks5-hostname "127.0.0.1:${SOCKS_PORT}" -v --connect-timeout 10 --max-time 15 -o /dev/null "http://www.google.com/generate_204" 2>&1 || true)
+    local test_code
+    test_code=$(echo "$test_result" | grep -oP 'HTTP/\S+ \K\d+' | tail -1)
+    if [[ "$test_code" == "204" || "$test_code" == "200" ]]; then
+        ok "SOCKS5 proxy working (HTTP $test_code)"
     else
-        warn "Proxy test returned: $test_result"
-        warn "xray log:"
-        cat "$xray_log" >&2
+        warn "SOCKS5 test HTTP code: ${test_code:-none}"
+        echo "$test_result" | tail -5
+        # Try HTTP proxy on port 1081 as fallback
+        log "Testing HTTP proxy on port ${HTTP_PORT}..."
+        test_result=$(curl -x "http://127.0.0.1:${HTTP_PORT}" -v --connect-timeout 10 --max-time 15 -o /dev/null "http://www.google.com/generate_204" 2>&1 || true)
+        test_code=$(echo "$test_result" | grep -oP 'HTTP/\S+ \K\d+' | tail -1)
+        if [[ "$test_code" == "204" || "$test_code" == "200" ]]; then
+            ok "HTTP proxy working (HTTP $test_code)"
+            log "Switching to HTTP proxy for tests..."
+            USE_HTTP_PROXY=true
+        else
+            warn "HTTP proxy test code: ${test_code:-none}"
+            echo "$test_result" | tail -5
+        fi
     fi
 
     echo ""
@@ -582,9 +596,9 @@ main() {
     echo -e "${BOLD}───────────────────────────────────────────────${NC}"
     echo ""
 
-    # Run speedtest (official Ookla binary with native SOCKS5 proxy support)
+    # Run speedtest (official Ookla binary via SOCKS5 proxy env vars)
     local result
-    if result=$(speedtest --accept-license --format=json --proxy="socks5h://127.0.0.1:${SOCKS_PORT}" 2>&1); then
+    if result=$(ALL_PROXY="socks5://127.0.0.1:${SOCKS_PORT}" speedtest --accept-license --format=json 2>&1); then
         echo ""
         echo -e "${BOLD}───────────────────────────────────────────────${NC}"
         echo -e "${GREEN}${BOLD}  Speed Test Results${NC}"
@@ -632,17 +646,23 @@ main() {
             "http://cachefly.cachefly.net/10mb.test"
         )
 
+        local proxy_flag
+        if [[ "${USE_HTTP_PROXY:-}" == "true" ]]; then
+            proxy_flag="-x http://127.0.0.1:${HTTP_PORT}"
+        else
+            proxy_flag="--socks5-hostname 127.0.0.1:${SOCKS_PORT}"
+        fi
+
         local dl_speed=""
         for url in "${test_urls[@]}"; do
             log "Trying: ${url}"
             local curl_out curl_err
-            curl_err=$(curl -x "socks5h://127.0.0.1:${SOCKS_PORT}" \
+            curl_err=$(curl $proxy_flag \
                 -w "\n%{speed_download}" \
                 -o /dev/null \
                 --connect-timeout 10 --max-time 60 \
                 "$url" 2>&1) || true
             curl_out=$(echo "$curl_err" | tail -1)
-            local curl_exit=$?
 
             if [[ -n "$curl_out" && "$curl_out" =~ ^[0-9] && "$curl_out" != "0" ]]; then
                 local bytes_per_sec
