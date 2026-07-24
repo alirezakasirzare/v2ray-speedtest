@@ -1,8 +1,12 @@
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates python3 python3-pip jq unzip bash procps \
-    && pip3 install --break-system-packages speedtest-cli PySocks \
+    curl ca-certificates jq unzip bash procps gnupg1 apt-transport-https \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install official Ookla speedtest binary
+RUN curl -sL https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | bash \
+    && apt-get install -y speedtest \
     && rm -rf /var/lib/apt/lists/*
 
 ARG XRAY_VERSION=v26.3.27

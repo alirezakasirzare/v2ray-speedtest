@@ -555,9 +555,9 @@ main() {
     echo -e "${BOLD}───────────────────────────────────────────────${NC}"
     echo ""
 
-    # Run speedtest
+    # Run speedtest (official Ookla binary with native SOCKS5 proxy support)
     local result
-    if result=$(ALL_PROXY="socks5://127.0.0.1:${SOCKS_PORT}" speedtest-cli --simple 2>&1); then
+    if result=$(speedtest --accept-license --simple --proxy="socks5://127.0.0.1:${SOCKS_PORT}" 2>&1); then
         echo ""
         echo -e "${BOLD}───────────────────────────────────────────────${NC}"
         echo -e "${GREEN}${BOLD}  Speed Test Results${NC}"
@@ -576,7 +576,7 @@ main() {
         done
         echo ""
     else
-        warn "speedtest-cli failed, falling back to curl download test..."
+        warn "speedtest failed, falling back to curl download test..."
         echo ""
 
         # Fallback: curl download test
