@@ -1,0 +1,7 @@
+services:
+  speedtest:
+    build: .
+    image: v2ray-speedtest
+    stdin_open: true
+    # Pass config URI as argument:
+    #   docker compose run --rm speedtest "vless://..."
