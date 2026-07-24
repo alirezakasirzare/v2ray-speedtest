@@ -557,7 +557,7 @@ main() {
 
     # Run speedtest
     local result
-    if result=$(speedtest-cli --proxy "socks5://127.0.0.1:${SOCKS_PORT}" --simple 2>&1); then
+    if result=$(ALL_PROXY="socks5://127.0.0.1:${SOCKS_PORT}" speedtest-cli --simple 2>&1); then
         echo ""
         echo -e "${BOLD}───────────────────────────────────────────────${NC}"
         echo -e "${GREEN}${BOLD}  Speed Test Results${NC}"

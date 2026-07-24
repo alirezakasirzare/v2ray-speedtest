@@ -2,7 +2,7 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates python3 python3-pip jq unzip bash procps \
-    && pip3 install --break-system-packages speedtest-cli \
+    && pip3 install --break-system-packages speedtest-cli PySocks \
     && rm -rf /var/lib/apt/lists/*
 
 ARG XRAY_VERSION=v26.3.27
