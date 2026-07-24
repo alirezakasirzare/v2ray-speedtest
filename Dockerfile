@@ -5,9 +5,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && pip3 install --break-system-packages speedtest-cli \
     && rm -rf /var/lib/apt/lists/*
 
-ARG XRAY_VERSION
-RUN XRAY_VERSION=${XRAY_VERSION:-$(curl -sL https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r .tag_name)} \
-    && echo "Installing xray-core ${XRAY_VERSION}" \
+ARG XRAY_VERSION=v26.3.27
+RUN echo "Installing xray-core ${XRAY_VERSION}" \
     && ARCH=$(uname -m) \
     && case "$ARCH" in \
         x86_64)  XRAY_ARCH="64" ;; \
