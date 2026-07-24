@@ -1,13 +1,20 @@
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates jq unzip bash procps gnupg1 apt-transport-https \
+    curl ca-certificates jq unzip bash procps \
     && rm -rf /var/lib/apt/lists/*
 
-# Install official Ookla speedtest binary
-RUN curl -sL https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | bash \
-    && apt-get install -y speedtest \
-    && rm -rf /var/lib/apt/lists/*
+# Install official Ookla speedtest binary (direct download)
+RUN ARCH=$(uname -m) \
+    && case "$ARCH" in \
+        x86_64)  SPEEDTEST_ARCH="x86_64" ;; \
+        aarch64) SPEEDTEST_ARCH="aarch64" ;; \
+        *)       echo "Unsupported arch: $ARCH"; exit 1 ;; \
+    esac \
+    && curl -sL "https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-${SPEEDTEST_ARCH}.tgz" -o /tmp/speedtest.tgz \
+    && tar -xzf /tmp/speedtest.tgz -C /usr/local/bin/ speedtest \
+    && chmod +x /usr/local/bin/speedtest \
+    && rm /tmp/speedtest.tgz
 
 ARG XRAY_VERSION=v26.3.27
 RUN echo "Installing xray-core ${XRAY_VERSION}" \
