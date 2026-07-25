@@ -183,12 +183,13 @@ parse_ss() {
     local without_frag="${after_proto%%#*}"
 
     if [[ "$without_frag" == *"@"* ]]; then
-        # ss://method:password@host:port
+        # ss://base64(method:password)@host:port
         local userinfo="${without_frag%%@*}"
         local host_port="${without_frag#*@}"
-        # Try base64 decode userinfo
         local decoded
-        decoded=$(echo "$userinfo" | base64 -d 2>/dev/null || echo "$userinfo")
+        if ! decoded=$(printf '%s' "$userinfo" | base64 -d 2>/dev/null); then
+            decoded="$userinfo"
+        fi
         SS_METHOD="${decoded%%:*}"
         SS_PASS="${decoded#*:}"
         SS_HOST="${host_port%%:*}"
@@ -196,18 +197,27 @@ parse_ss() {
         SS_PORT="${port_part%%\?*}"
     else
         # ss://base64(method:password@host:port)
-        local mod=$((${#without_frag} % 4))
-        if [[ $mod -eq 2 ]]; then without_frag="${without_frag}=="
-        elif [[ $mod -eq 3 ]]; then without_frag="${without_frag}="
+        local padded="$without_frag"
+        local mod=$((${#padded} % 4))
+        if [[ $mod -eq 2 ]]; then padded="${padded}=="
+        elif [[ $mod -eq 3 ]]; then padded="${padded}="
         fi
         local decoded
-        decoded=$(echo "$without_frag" | base64 -d 2>/dev/null || echo "")
+        if ! decoded=$(printf '%s' "$padded" | base64 -d 2>/dev/null); then
+            decoded="$padded"
+        fi
         SS_METHOD="${decoded%%:*}"
         local rest="${decoded#*:}"
         SS_PASS="${rest%%@*}"
         local host_port="${rest#*@}"
         SS_HOST="${host_port%%:*}"
         SS_PORT="${host_port##*:}"
+    fi
+
+    # For 2022-blake3 methods, SS URI password is key_base64:salt_base64
+    # but xray expects just the base64-encoded key
+    if [[ "$SS_METHOD" == 2022-* ]]; then
+        SS_PASS="${SS_PASS%%:*}"
     fi
 
     CONFIG_NAME="$fragment"
