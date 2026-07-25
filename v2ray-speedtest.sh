@@ -84,6 +84,7 @@ parse_vless() {
     VLESS_NET="tcp"
     VLESS_HEADER_TYPE=""
     VLESS_HOST_NAME=""
+    VLESS_PATH=""
 
     # Parse query params
     IFS='&' read -ra params <<< "$query"
@@ -214,43 +215,59 @@ parse_ss() {
 
 # ─── Generate xray config JSON ───────────────────────────
 generate_xray_config_vless() {
-    local stream_settings
+    # Build transport-specific settings
+    local transport_settings=""
+    case "$VLESS_NET" in
+        ws)
+            local ws_extra=""
+            [[ -n "${VLESS_PATH:-}" ]] && ws_extra="${ws_extra}${ws_extra:+, }\"path\": \"${VLESS_PATH}\""
+            [[ -n "${VLESS_HOST_NAME:-}" ]] && ws_extra="${ws_extra}${ws_extra:+, }\"headers\": { \"Host\": \"${VLESS_HOST_NAME}\" }"
+            transport_settings="\"wsSettings\": { ${ws_extra} }"
+            ;;
+        h2|http)
+            local h2_extra=""
+            [[ -n "${VLESS_PATH:-}" ]] && h2_extra="${h2_extra}${h2_extra:+, }\"path\": \"${VLESS_PATH}\""
+            [[ -n "${VLESS_HOST_NAME:-}" ]] && h2_extra="${h2_extra}${h2_extra:+, }\"host\": [ \"${VLESS_HOST_NAME}\" ]"
+            transport_settings="\"httpSettings\": { ${h2_extra} }"
+            ;;
+        grpc)
+            local svc="${VLESS_PATH:-}"
+            [[ -z "$svc" ]] && svc="${VLESS_HOST_NAME:-}"
+            [[ -n "$svc" ]] && transport_settings="\"grpcSettings\": { \"serviceName\": \"${svc}\" }"
+            ;;
+        tcp)
+            if [[ -n "${VLESS_HEADER_TYPE:-}" && "$VLESS_HEADER_TYPE" == "http" ]]; then
+                local tcp_host="${VLESS_HOST_NAME:-}"
+                local tcp_path="${VLESS_PATH:-}"
+                [[ -z "$tcp_path" ]] && tcp_path="/"
+                transport_settings="\"tcpSettings\": { \"header\": { \"type\": \"http\", \"request\": { \"path\": [ \"${tcp_path}\" ], \"headers\": { \"Host\": [ \"${tcp_host}\" ] } } } }"
+            fi
+            ;;
+    esac
+
+    # Build security settings
+    local security_block=""
     if [[ "$VLESS_SECURITY" == "reality" ]]; then
-        stream_settings=$(cat <<SEOF
-        "streamSettings": {
-            "network": "${VLESS_NET}",
-            "security": "reality",
-            "realitySettings": {
-                "fingerprint": "${VLESS_FP}",
-                "serverName": "${VLESS_SNI}",
-                "publicKey": "${VLESS_PBK}",
-                "shortId": "${VLESS_SID}",
-                "spiderX": "${VLESS_SPX}"
-            }
-        }
-SEOF
-)
+        security_block="\"realitySettings\": {
+                \"fingerprint\": \"${VLESS_FP}\",
+                \"serverName\": \"${VLESS_SNI}\",
+                \"publicKey\": \"${VLESS_PBK}\",
+                \"shortId\": \"${VLESS_SID}\",
+                \"spiderX\": \"${VLESS_SPX}\"
+            }"
     elif [[ "$VLESS_SECURITY" == "tls" ]]; then
-        stream_settings=$(cat <<SEOF
-        "streamSettings": {
-            "network": "${VLESS_NET}",
-            "security": "tls",
-            "tlsSettings": {
-                "fingerprint": "${VLESS_FP}",
-                "serverName": "${VLESS_SNI}"
-            }
-        }
-SEOF
-)
-    else
-        stream_settings=$(cat <<SEOF
-        "streamSettings": {
-            "network": "${VLESS_NET}",
-            "security": "none"
-        }
-SEOF
-)
+        security_block="\"tlsSettings\": {
+                \"fingerprint\": \"${VLESS_FP}\",
+                \"serverName\": \"${VLESS_SNI}\"
+            }"
     fi
+
+    # Assemble streamSettings
+    local stream_parts="\"network\": \"${VLESS_NET}\", \"security\": \"${VLESS_SECURITY}\""
+    [[ -n "$security_block" ]] && stream_parts="${stream_parts}, ${security_block}"
+    [[ -n "$transport_settings" ]] && stream_parts="${stream_parts}, ${transport_settings}"
+
+    stream_settings="\"streamSettings\": { ${stream_parts} }"
 
     local flow_line=""
     [[ -n "$VLESS_FLOW" ]] && flow_line="\"flow\": \"${VLESS_FLOW}\","
@@ -301,31 +318,40 @@ EOF
 }
 
 generate_xray_config_vmess() {
-    local tls_sec="none"
-    [[ "$VMESS_TLS" == "tls" ]] && tls_sec="tls"
+    local transport_settings=""
+    case "$VMESS_NET" in
+        ws)
+            local ws_extra=""
+            [[ -n "${VMESS_PATH:-}" ]] && ws_extra="${ws_extra}${ws_extra:+, }\"path\": \"${VMESS_PATH}\""
+            [[ -n "${VMESS_HOST_NAME:-}" ]] && ws_extra="${ws_extra}${ws_extra:+, }\"headers\": { \"Host\": \"${VMESS_HOST_NAME}\" }"
+            transport_settings="\"wsSettings\": { ${ws_extra} }"
+            ;;
+        h2|http)
+            local h2_extra=""
+            [[ -n "${VMESS_PATH:-}" ]] && h2_extra="${h2_extra}${h2_extra:+, }\"path\": \"${VMESS_PATH}\""
+            [[ -n "${VMESS_HOST_NAME:-}" ]] && h2_extra="${h2_extra}${h2_extra:+, }\"host\": [ \"${VMESS_HOST_NAME}\" ]"
+            transport_settings="\"httpSettings\": { ${h2_extra} }"
+            ;;
+        grpc)
+            local svc="${VMESS_PATH:-}"
+            [[ -z "$svc" ]] && svc="${VMESS_HOST_NAME:-}"
+            [[ -n "$svc" ]] && transport_settings="\"grpcSettings\": { \"serviceName\": \"${svc}\" }"
+            ;;
+    esac
 
-    local stream_settings
+    local security_block=""
     if [[ "$VMESS_TLS" == "tls" ]]; then
-        stream_settings=$(cat <<SEOF
-        "streamSettings": {
-            "network": "${VMESS_NET}",
-            "security": "tls",
-            "tlsSettings": {
-                "fingerprint": "${VMESS_FP}",
-                "serverName": "${VMESS_SNI}"
-            }
-        }
-SEOF
-)
-    else
-        stream_settings=$(cat <<SEOF
-        "streamSettings": {
-            "network": "${VMESS_NET}",
-            "security": "none"
-        }
-SEOF
-)
+        security_block="\"tlsSettings\": {
+                \"fingerprint\": \"${VMESS_FP}\",
+                \"serverName\": \"${VMESS_SNI}\"
+            }"
     fi
+
+    local stream_parts="\"network\": \"${VMESS_NET}\", \"security\": \"${VMESS_TLS:-none}\""
+    [[ -n "$security_block" ]] && stream_parts="${stream_parts}, ${security_block}"
+    [[ -n "$transport_settings" ]] && stream_parts="${stream_parts}, ${transport_settings}"
+
+    local stream_settings="\"streamSettings\": { ${stream_parts} }"
 
     cat > "$XRAY_CONFIG" <<EOF
 {
@@ -371,28 +397,40 @@ EOF
 }
 
 generate_xray_config_trojan() {
-    local stream_settings
+    local transport_settings=""
+    case "$TROJAN_NET" in
+        ws)
+            local ws_extra=""
+            [[ -n "${TROJAN_PATH:-}" ]] && ws_extra="${ws_extra}${ws_extra:+, }\"path\": \"${TROJAN_PATH}\""
+            [[ -n "${TROJAN_HOST_NAME:-}" ]] && ws_extra="${ws_extra}${ws_extra:+, }\"headers\": { \"Host\": \"${TROJAN_HOST_NAME}\" }"
+            transport_settings="\"wsSettings\": { ${ws_extra} }"
+            ;;
+        h2|http)
+            local h2_extra=""
+            [[ -n "${TROJAN_PATH:-}" ]] && h2_extra="${h2_extra}${h2_extra:+, }\"path\": \"${TROJAN_PATH}\""
+            [[ -n "${TROJAN_HOST_NAME:-}" ]] && h2_extra="${h2_extra}${h2_extra:+, }\"host\": [ \"${TROJAN_HOST_NAME}\" ]"
+            transport_settings="\"httpSettings\": { ${h2_extra} }"
+            ;;
+        grpc)
+            local svc="${TROJAN_PATH:-}"
+            [[ -z "$svc" ]] && svc="${TROJAN_HOST_NAME:-}"
+            [[ -n "$svc" ]] && transport_settings="\"grpcSettings\": { \"serviceName\": \"${svc}\" }"
+            ;;
+    esac
+
+    local security_block=""
     if [[ "$TROJAN_SECURITY" == "tls" ]]; then
-        stream_settings=$(cat <<SEOF
-        "streamSettings": {
-            "network": "${TROJAN_NET}",
-            "security": "tls",
-            "tlsSettings": {
-                "fingerprint": "${TROJAN_FP}",
-                "serverName": "${TROJAN_SNI}"
-            }
-        }
-SEOF
-)
-    else
-        stream_settings=$(cat <<SEOF
-        "streamSettings": {
-            "network": "${TROJAN_NET}",
-            "security": "none"
-        }
-SEOF
-)
+        security_block="\"tlsSettings\": {
+                \"fingerprint\": \"${TROJAN_FP}\",
+                \"serverName\": \"${TROJAN_SNI}\"
+            }"
     fi
+
+    local stream_parts="\"network\": \"${TROJAN_NET}\", \"security\": \"${TROJAN_SECURITY}\""
+    [[ -n "$security_block" ]] && stream_parts="${stream_parts}, ${security_block}"
+    [[ -n "$transport_settings" ]] && stream_parts="${stream_parts}, ${transport_settings}"
+
+    local stream_settings="\"streamSettings\": { ${stream_parts} }"
 
     cat > "$XRAY_CONFIG" <<EOF
 {
@@ -599,10 +637,11 @@ main() {
     log "Running speedtest through proxy..."
     local result=""
     local speedtest_exit=0
+    local speedtest_log="${TMPDIR}/speedtest.log"
     result=$(ALL_PROXY="socks5://127.0.0.1:${SOCKS_PORT}" \
         http_proxy="socks5://127.0.0.1:${SOCKS_PORT}" \
         https_proxy="socks5://127.0.0.1:${SOCKS_PORT}" \
-        speedtest --format=json --accept-license --accept-gdpr --progress=no 2>&1) || speedtest_exit=$?
+        speedtest --format=json --accept-license --accept-gdpr --progress=no 2>"$speedtest_log") || speedtest_exit=$?
 
     echo ""
     echo -e "${BOLD}───────────────────────────────────────────────${NC}"
@@ -618,6 +657,12 @@ main() {
         done
     else
         warn "Speedtest produced no output (exit code: $speedtest_exit)"
+        if [[ -s "$speedtest_log" ]]; then
+            log "Speedtest stderr:"
+            head -10 "$speedtest_log" | while IFS= read -r line; do
+                echo -e "  ${CYAN}${line}${NC}"
+            done
+        fi
     fi
 
     # Try to parse JSON output
@@ -647,6 +692,12 @@ main() {
         echo ""
     else
         warn "Could not parse speedtest results, falling back to curl download test..."
+        if [[ -s "$speedtest_log" ]]; then
+            log "Speedtest stderr:"
+            head -10 "$speedtest_log" | while IFS= read -r line; do
+                echo -e "  ${CYAN}${line}${NC}"
+            done
+        fi
         echo ""
 
         # Fallback: curl download test

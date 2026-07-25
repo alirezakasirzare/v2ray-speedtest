@@ -1,7 +1,7 @@
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates jq unzip bash procps \
+    curl ca-certificates jq unzip bash procps bc \
     && rm -rf /var/lib/apt/lists/*
 
 # Install official Ookla speedtest binary (direct download)
