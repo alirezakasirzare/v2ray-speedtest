@@ -599,7 +599,10 @@ main() {
     log "Running speedtest through proxy..."
     local result=""
     local speedtest_exit=0
-    result=$(ALL_PROXY="socks5://127.0.0.1:${SOCKS_PORT}" speedtest --accept-license --format=json 2>&1) || speedtest_exit=$?
+    result=$(ALL_PROXY="socks5://127.0.0.1:${SOCKS_PORT}" \
+        http_proxy="socks5://127.0.0.1:${SOCKS_PORT}" \
+        https_proxy="socks5://127.0.0.1:${SOCKS_PORT}" \
+        speedtest --format=json --accept-license --accept-gdpr --progress=no 2>&1) || speedtest_exit=$?
 
     echo ""
     echo -e "${BOLD}───────────────────────────────────────────────${NC}"

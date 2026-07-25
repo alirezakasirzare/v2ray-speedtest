@@ -14,7 +14,9 @@ RUN ARCH=$(uname -m) \
     && curl -sL "https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-${SPEEDTEST_ARCH}.tgz" -o /tmp/speedtest.tgz \
     && tar -xzf /tmp/speedtest.tgz -C /usr/local/bin/ speedtest \
     && chmod +x /usr/local/bin/speedtest \
-    && rm /tmp/speedtest.tgz
+    && rm /tmp/speedtest.tgz \
+    && mkdir -p /root/.config/ookla \
+    && echo '{"Settings":{"LicenseAccepted":"true"}}' > /root/.config/ookla/speedtest-cli.json
 
 ARG XRAY_VERSION=v26.3.27
 RUN echo "Installing xray-core ${XRAY_VERSION}" \
