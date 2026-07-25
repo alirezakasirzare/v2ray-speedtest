@@ -566,19 +566,18 @@ main() {
     ok "Proxy is ready"
 
     # Test proxy connectivity (SOCKS5)
-    log "Testing SOCKS5 proxy on port ${SOCKS_PORT}..."
-    local test_result
-    test_result=$(curl --socks5-hostname "127.0.0.1:${SOCKS_PORT}" -v --connect-timeout 10 --max-time 15 -o /dev/null "http://www.google.com/generate_204" 2>&1 || true)
-    local test_code
+    log "Testing SOCKS5 proxy on port ${SOCKS_PORT} (timeout 15s)..."
+    local test_result test_code
+    test_result=$(timeout 15 curl --socks5-hostname "127.0.0.1:${SOCKS_PORT}" -v --connect-timeout 10 --max-time 12 -o /dev/null "http://cp.cloudflare.com/generate_204" 2>&1 || true)
     test_code=$(echo "$test_result" | grep -oP 'HTTP/\S+ \K\d+' | tail -1)
     if [[ "$test_code" == "204" || "$test_code" == "200" ]]; then
         ok "SOCKS5 proxy working (HTTP $test_code)"
     else
         warn "SOCKS5 test HTTP code: ${test_code:-none}"
-        echo "$test_result" | tail -5
+        echo "$test_result" | grep -E "connect|error|refused|timed|fail" | tail -3
         # Try HTTP proxy on port 1081 as fallback
-        log "Testing HTTP proxy on port ${HTTP_PORT}..."
-        test_result=$(curl -x "http://127.0.0.1:${HTTP_PORT}" -v --connect-timeout 10 --max-time 15 -o /dev/null "http://www.google.com/generate_204" 2>&1 || true)
+        log "Testing HTTP proxy on port ${HTTP_PORT} (timeout 15s)..."
+        test_result=$(timeout 15 curl -x "http://127.0.0.1:${HTTP_PORT}" -v --connect-timeout 10 --max-time 12 -o /dev/null "http://cp.cloudflare.com/generate_204" 2>&1 || true)
         test_code=$(echo "$test_result" | grep -oP 'HTTP/\S+ \K\d+' | tail -1)
         if [[ "$test_code" == "204" || "$test_code" == "200" ]]; then
             ok "HTTP proxy working (HTTP $test_code)"
@@ -586,7 +585,7 @@ main() {
             USE_HTTP_PROXY=true
         else
             warn "HTTP proxy test code: ${test_code:-none}"
-            echo "$test_result" | tail -5
+            echo "$test_result" | grep -E "connect|error|refused|timed|fail" | tail -3
         fi
     fi
 
@@ -597,45 +596,54 @@ main() {
     echo ""
 
     # Run speedtest (official Ookla binary via SOCKS5 proxy env vars)
-    local result
-    if result=$(ALL_PROXY="socks5://127.0.0.1:${SOCKS_PORT}" speedtest --accept-license --format=json 2>&1); then
-        echo ""
-        echo -e "${BOLD}───────────────────────────────────────────────${NC}"
-        echo -e "${GREEN}${BOLD}  Speed Test Results${NC}"
-        echo -e "${BOLD}───────────────────────────────────────────────${NC}"
-        echo ""
+    log "Running speedtest through proxy..."
+    local result=""
+    local speedtest_exit=0
+    result=$(ALL_PROXY="socks5://127.0.0.1:${SOCKS_PORT}" speedtest --accept-license --format=json 2>&1) || speedtest_exit=$?
 
-        # Parse JSON output
-        local ping_ms dl_bps ul_bps dl_mbps ul_mbps server_name
+    echo ""
+    echo -e "${BOLD}───────────────────────────────────────────────${NC}"
+    echo -e "${GREEN}${BOLD}  Speed Test Results${NC}"
+    echo -e "${BOLD}───────────────────────────────────────────────${NC}"
+    echo ""
+
+    # Show raw output for debugging
+    if [[ -n "$result" ]]; then
+        log "Speedtest raw output (first 5 lines):"
+        echo "$result" | head -5 | while IFS= read -r line; do
+            echo -e "  ${CYAN}${line}${NC}"
+        done
+    else
+        warn "Speedtest produced no output (exit code: $speedtest_exit)"
+    fi
+
+    # Try to parse JSON output
+    local ping_ms="" dl_bps="" ul_bps="" dl_mbps="" ul_mbps="" server_name=""
+    if [[ -n "$result" ]]; then
         ping_ms=$(echo "$result" | jq -r '.ping.latency // empty' 2>/dev/null)
         dl_bps=$(echo "$result" | jq -r '.download.bandwidth // empty' 2>/dev/null)
         ul_bps=$(echo "$result" | jq -r '.upload.bandwidth // empty' 2>/dev/null)
         server_name=$(echo "$result" | jq -r '.server.name // empty' 2>/dev/null)
         local server_country
         server_country=$(echo "$result" | jq -r '.server.country // empty' 2>/dev/null)
-        local server_provider
-        server_provider=$(echo "$result" | jq -r '.server.host // empty' 2>/dev/null)
 
         # Convert bytes/sec to Mbit/s (bandwidth is in bytes/sec)
-        if [[ -n "$dl_bps" ]]; then
+        if [[ -n "$dl_bps" && "$dl_bps" != "0" ]]; then
             dl_mbps=$(echo "scale=2; ${dl_bps} * 8 / 1000000" | bc)
         fi
-        if [[ -n "$ul_bps" ]]; then
+        if [[ -n "$ul_bps" && "$ul_bps" != "0" ]]; then
             ul_mbps=$(echo "scale=2; ${ul_bps} * 8 / 1000000" | bc)
         fi
+    fi
 
+    if [[ -n "$dl_mbps" ]]; then
         [[ -n "$server_name" ]] && echo -e "  Server: ${BOLD}${server_name}${NC} (${server_country})"
         [[ -n "$ping_ms" ]]     && echo -e "  ${CYAN}Ping: ${ping_ms} ms${NC}"
-        [[ -n "$dl_mbps" ]]     && echo -e "  ${GREEN}Download: ${dl_mbps} Mbit/s${NC}"
-        [[ -n "$ul_mbps" ]]     && echo -e "  ${YELLOW}Upload: ${ul_mbps} Mbit/s${NC}"
+        echo -e "  ${GREEN}Download: ${dl_mbps} Mbit/s${NC}"
+        echo -e "  ${YELLOW}Upload: ${ul_mbps} Mbit/s${NC}"
         echo ""
     else
-        warn "speedtest failed. Error output:"
-        echo "$result" | head -20 | while IFS= read -r line; do
-            echo -e "  ${RED}${line}${NC}"
-        done
-        echo ""
-        warn "Falling back to curl download test..."
+        warn "Could not parse speedtest results, falling back to curl download test..."
         echo ""
 
         # Fallback: curl download test
