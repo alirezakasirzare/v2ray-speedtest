@@ -186,10 +186,8 @@ parse_ss() {
         # ss://base64(method:password)@host:port
         local userinfo="${without_frag%%@*}"
         local host_port="${without_frag#*@}"
-        local decoded
-        if ! decoded=$(printf '%s' "$userinfo" | base64 -d 2>/dev/null); then
-            decoded="$userinfo"
-        fi
+        local decoded=""
+        decoded=$(printf '%s' "$userinfo" | base64 -d 2>/dev/null) || decoded="$userinfo"
         SS_METHOD="${decoded%%:*}"
         SS_PASS="${decoded#*:}"
         SS_HOST="${host_port%%:*}"
@@ -202,10 +200,8 @@ parse_ss() {
         if [[ $mod -eq 2 ]]; then padded="${padded}=="
         elif [[ $mod -eq 3 ]]; then padded="${padded}="
         fi
-        local decoded
-        if ! decoded=$(printf '%s' "$padded" | base64 -d 2>/dev/null); then
-            decoded="$padded"
-        fi
+        local decoded=""
+        decoded=$(printf '%s' "$padded" | base64 -d 2>/dev/null) || decoded="$padded"
         SS_METHOD="${decoded%%:*}"
         local rest="${decoded#*:}"
         SS_PASS="${rest%%@*}"
